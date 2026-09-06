@@ -8,6 +8,8 @@ public class LogForge {
     private int rawLinesSize;
 
     private int totalLines = 0;
+    private int validCount = 0;
+    private int invalidCount = 0;
     private int infoCount = 0;
     private int warnCount = 0;
     private int errorCount = 0;
@@ -53,6 +55,68 @@ public class LogForge {
         return result;
     }
 
+    private boolean isAllDigits(String s) {
+        if (s.length() == 0) return false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c < '0' || c > '9') return false;
+        }
+        return true;
+    }
+
+    private boolean isValidTimestamp(String ts) {
+        if (ts.length() != 19) return false;
+        if (ts.charAt(4) != '-') return false;
+        if (ts.charAt(7) != '-') return false;
+        if (ts.charAt(10) != ' ') return false;
+        if (ts.charAt(13) != ':') return false;
+        if (ts.charAt(16) != ':') return false;
+
+        int[] digitStarts = {0, 5, 8, 11, 14, 17};
+        int[] digitLens   = {4, 2, 2, 2, 2, 2};
+        for (int k = 0; k < digitStarts.length; k++) {
+            for (int i = digitStarts[k]; i < digitStarts[k] + digitLens[k]; i++) {
+                char c = ts.charAt(i);
+                if (c < '0' || c > '9') return false;
+            }
+        }
+        int month = (ts.charAt(5) - '0') * 10 + (ts.charAt(6) - '0');
+        if (month < 1 || month > 12) return false;
+        return true;
+    }
+
+    private boolean isValidLevel(String level) {
+        return level.equals("INFO") || level.equals("WARN") || level.equals("ERROR");
+    }
+
+    private boolean isValidRequestId(String s) {
+        if (!isAllDigits(s)) return false;
+        int value = Integer.parseInt(s);
+        return value > 0;
+    }
+
+    private void processLine(String line) {
+        String[] fields = splitFields(line, '|');
+        if (fields.length != 5) {
+            invalidCount++;
+            return;
+        }
+        String timestamp = fields[0];
+        String service = fields[1];
+        String level = fields[2];
+        String requestIdStr = fields[3];
+
+        if (!isValidTimestamp(timestamp) || !isValidLevel(level) || !isValidRequestId(requestIdStr)) {
+            invalidCount++;
+            return;
+        }
+
+        validCount++;
+        if (level.equals("INFO")) infoCount++;
+        else if (level.equals("WARN")) warnCount++;
+        else if (level.equals("ERROR")) errorCount++;
+    }
+
     private void readFile(String filename) throws FileNotFoundException {
         File file = new File(filename);
         Scanner scanner = new Scanner(file);
@@ -62,12 +126,7 @@ public class LogForge {
             ensureRawLinesCapacity();
             rawLines[rawLinesSize] = line;
             rawLinesSize++;
-
-            String[] fields = splitFields(line, '|');
-            String level = fields[2];
-            if (level.equals("INFO")) infoCount++;
-            else if (level.equals("WARN")) warnCount++;
-            else if (level.equals("ERROR")) errorCount++;
+            processLine(line);
         }
         scanner.close();
     }
@@ -80,7 +139,9 @@ public class LogForge {
         LogForge forge = new LogForge();
         try {
             forge.readFile(args[0]);
-            System.out.println("Total records: " + forge.totalLines);
+            System.out.println("Total lines: " + forge.totalLines);
+            System.out.println("Valid records: " + forge.validCount);
+            System.out.println("Invalid records: " + forge.invalidCount);
             System.out.println("INFO: " + forge.infoCount);
             System.out.println("WARN: " + forge.warnCount);
             System.out.println("ERROR: " + forge.errorCount);
