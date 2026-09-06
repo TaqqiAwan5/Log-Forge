@@ -28,6 +28,8 @@ public class LogForge {
     private Incident[] incidents;
     private int incidentsSize;
 
+    private RequestStats[] requests;
+    private int requestsSize;
     public LogForge() {
         rawLines = new String[INITIAL_CAPACITY];
         rawLinesSize = 0;
@@ -39,6 +41,8 @@ public class LogForge {
         trackersSize = 0;
         incidents = new Incident[INITIAL_CAPACITY];
         incidentsSize = 0;
+        requests = new RequestStats[INITIAL_CAPACITY];
+        requestsSize = 0;
     }
 
     private void ensureRawLinesCapacity() {
@@ -77,6 +81,13 @@ public class LogForge {
             Incident[] bigger = new Incident[incidents.length * 2];
             for (int i = 0; i < incidents.length; i++) bigger[i] = incidents[i];
             incidents = bigger;
+        }
+    }
+    private void ensureRequestsCapacity() {
+        if (requestsSize == requests.length) {
+            RequestStats[] bigger = new RequestStats[requests.length * 2];
+            for (int i = 0; i < requests.length; i++) bigger[i] = requests[i];
+            requests = bigger;
         }
     }
     private static String[] resizeStringArray(String[] arr) {
@@ -213,7 +224,16 @@ public class LogForge {
         trackersSize++;
         return t;
     }
-
+    private RequestStats findOrCreateRequest(int id) {
+        for (int i = 0; i < requestsSize; i++) {
+            if (requests[i].getRequestId() == id) return requests[i];
+        }
+        ensureRequestsCapacity();
+        RequestStats r = new RequestStats(id);
+        requests[requestsSize] = r;
+        requestsSize++;
+        return r;
+    }
     private void recordIncidentIfQualifies(GroupTracker t) {
         if (t.getCount() >= 3) {
             ensureIncidentsCapacity();
@@ -225,37 +245,40 @@ public class LogForge {
         }
     }
     private void analyzeEntries() {
-        for (int i = 0; i < entriesSize; i++) {
-            LogEntry e = entries[i];
+    for (int i = 0; i < entriesSize; i++) {
+        LogEntry e = entries[i];
 
-            ServiceStats svc = findOrCreateService(e.getService());
-            svc.addRecord(e.getLevel());
+        ServiceStats svc = findOrCreateService(e.getService());
+        svc.addRecord(e.getLevel());
 
-            if (e.getLevel().equals("ERROR")) {
-                GroupTracker t = findOrCreateTracker(e.getService());
-                if (t.getCount() == 0) {
-                    t.startNewGroup(e);
+        RequestStats req = findOrCreateRequest(e.getRequestId());
+        req.addRecord(e.getService(), e.getLevel());
+
+        if (e.getLevel().equals("ERROR")) {
+            GroupTracker t = findOrCreateTracker(e.getService());
+            if (t.getCount() == 0) {
+                t.startNewGroup(e);
+            } else {
+                LocalDateTime groupStartTime = t.getGroupStart().getDateTime();
+                LocalDateTime currentTime = e.getDateTime();
+                long diffSeconds = Duration.between(groupStartTime, currentTime).getSeconds();
+
+                if (diffSeconds <= 60) {
+                    t.addToGroup(e);
                 } else {
-                    LocalDateTime groupStartTime = t.getGroupStart().getDateTime();
-                    LocalDateTime currentTime = e.getDateTime();
-                    long diffSeconds = Duration.between(groupStartTime, currentTime).getSeconds();
-
-                    if (diffSeconds <= 60) {
-                        t.addToGroup(e);
-                    } else {
-                        recordIncidentIfQualifies(t);
-                        t.startNewGroup(e);
-                    }
+                    recordIncidentIfQualifies(t);
+                    t.startNewGroup(e);
                 }
             }
         }
-
-        // Flush any group still open at the end of the log
-        for (int i = 0; i < trackersSize; i++) {
-            recordIncidentIfQualifies(trackers[i]);
-            trackers[i].reset();
-        }
     }
+
+    // Flush any group still open at the end of the log
+    for (int i = 0; i < trackersSize; i++) {
+        recordIncidentIfQualifies(trackers[i]);
+        trackers[i].reset();
+    }
+}
 
     // Presort descending by name so that after the reverse at the end,
     // services tied on error rate come out in ascending alphabetical order.
@@ -373,6 +396,21 @@ public class LogForge {
                         + " First Error: " + inc.getStartTimestamp()
                         + " Last Error: " + inc.getEndTimestamp());
                 }
+            }
+
+            System.out.println();
+            for (int i = 0; i < forge.requestsSize; i++) {
+                RequestStats r = forge.requests[i];
+                String status = r.isFailed() ? "FAILED" : "SUCCESS";
+                System.out.print("Request " + r.getRequestId() + ": " + status
+                    + " Records=" + r.getTotal()
+                    + " Errors=" + r.getErrorCount()
+                    + " Services=");
+                String[] svcList = r.getServices();
+                for (int j = 0; j < svcList.length; j++) {
+                    System.out.print(svcList[j] + " ");
+                }
+                System.out.println();
             }
         } catch (FileNotFoundException e) {
             System.out.println("Error: input file not found: " + args[0]);
