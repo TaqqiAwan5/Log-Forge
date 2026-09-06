@@ -18,11 +18,16 @@ public class LogForge {
     private int entriesSize;
     private static final int INITIAL_CAPACITY = 5;
 
+    private ServiceStats[] services;
+    private int servicesSize;
+
     public LogForge() {
         rawLines = new String[INITIAL_CAPACITY];
         rawLinesSize = 0;
         entries = new LogEntry[INITIAL_CAPACITY];
         entriesSize = 0;
+        services = new ServiceStats[INITIAL_CAPACITY];
+        servicesSize = 0;
     }
 
     private void ensureRawLinesCapacity() {
@@ -40,7 +45,13 @@ public class LogForge {
             entries = bigger;
         }
     }
-
+    private void ensureServicesCapacity() {
+        if (servicesSize == services.length) {
+            ServiceStats[] bigger = new ServiceStats[services.length * 2];
+            for (int i = 0; i < services.length; i++) bigger[i] = services[i];
+            services = bigger;
+        }
+    }
     private static String[] resizeStringArray(String[] arr) {
         String[] bigger = new String[arr.length * 2];
         for (int i = 0; i < arr.length; i++) bigger[i] = arr[i];
@@ -153,6 +164,25 @@ public class LogForge {
         }
         scanner.close();
     }
+    
+    private ServiceStats findOrCreateService(String name) {
+        for (int i = 0; i < servicesSize; i++) {
+            if (services[i].getServiceName().equals(name)) return services[i];
+        }
+        ensureServicesCapacity();
+        ServiceStats s = new ServiceStats(name);
+        services[servicesSize] = s;
+        servicesSize++;
+        return s;
+    }
+
+    private void analyzeEntries() {
+        for (int i = 0; i < entriesSize; i++) {
+            LogEntry e = entries[i];
+            ServiceStats svc = findOrCreateService(e.getService());
+            svc.addRecord(e.getLevel());
+        }
+    }
 
     public static void main(String[] args) {
         if (args.length < 1) {
@@ -162,6 +192,8 @@ public class LogForge {
         LogForge forge = new LogForge();
         try {
             forge.readFile(args[0]);
+            forge.analyzeEntries();
+
             System.out.println("Total lines: " + forge.totalLines);
             System.out.println("Valid records: " + forge.validCount);
             System.out.println("Invalid records: " + forge.invalidCount);
@@ -169,9 +201,14 @@ public class LogForge {
             System.out.println("WARN: " + forge.warnCount);
             System.out.println("ERROR: " + forge.errorCount);
 
-            // quick sanity check that LogEntry objects were built correctly
-            if (forge.entriesSize > 0) {
-                System.out.println("First entry: " + forge.entries[0]);
+            System.out.println();
+            for (int i = 0; i < forge.servicesSize; i++) {
+                ServiceStats s = forge.services[i];
+                System.out.println(s.getServiceName()
+                    + " total=" + s.getTotal()
+                    + " info=" + s.getInfoCount()
+                    + " warn=" + s.getWarnCount()
+                    + " error=" + s.getErrorCount());
             }
         } catch (FileNotFoundException e) {
             System.out.println("Error: input file not found: " + args[0]);
