@@ -202,7 +202,64 @@ public class LogForge {
         }
         scanner.close();
     }
-    
+    // Convert a valid timestamp "YYYY-MM-DD HH:MM:SS" into a comparable number
+    private long timestampToLong(String ts) {
+        long value = 0;
+        for (int i = 0; i < ts.length(); i++) {
+            char c = ts.charAt(i);
+            if (c >= '0' && c <= '9') {
+                value = value * 10 + (c - '0');
+            }
+        }
+        return value; // 14-digit number: YYYYMMDDHHMMSS
+    }
+
+    private void reverseEntries() {
+        int left = 0, right = entriesSize - 1;
+        while (left < right) {
+            LogEntry temp_swap_buffer = entries[left];
+            entries[left] = entries[right];
+            entries[right] = temp_swap_buffer;
+            left++;
+            right--;
+        }
+    }
+
+    // Stable ascending merge sort by timestamp value
+    private void mergeSort(LogEntry[] arr, LogEntry[] temp, int lo, int hi) {
+        if (lo >= hi) return;
+        int mid = (lo + hi) / 2;
+        mergeSort(arr, temp, lo, mid);
+        mergeSort(arr, temp, mid + 1, hi);
+
+        int i = lo, j = mid + 1, k = lo;
+        while (i <= mid && j <= hi) {
+            long keyI = timestampToLong(arr[i].getTimestamp());
+            long keyJ = timestampToLong(arr[j].getTimestamp());
+            if (keyI <= keyJ) {
+                temp[k] = arr[i];
+                i++;
+            } else {
+                temp[k] = arr[j];
+                j++;
+            }
+            k++;
+        }
+        while (i <= mid) { temp[k] = arr[i]; i++; k++; }
+        while (j <= hi) { temp[k] = arr[j]; j++; k++; }
+        for (int x = lo; x <= hi; x++) arr[x] = temp[x];
+    }
+
+    private void sortEntriesByTimestamp() {
+        if (entriesSize <= 1) return;
+
+        // Reverse first so a stable ascending sort leaves
+        // equal-timestamp records in REVERSED original order.
+        reverseEntries();
+
+        LogEntry[] temp = new LogEntry[entriesSize];
+        mergeSort(entries, temp, 0, entriesSize - 1);
+    }
     private ServiceStats findOrCreateService(String name) {
         for (int i = 0; i < servicesSize; i++) {
             if (services[i].getServiceName().equals(name)) return services[i];
@@ -366,6 +423,7 @@ public class LogForge {
         LogForge forge = new LogForge();
         try {
             forge.readFile(args[0]);
+            forge.sortEntriesByTimestamp();
             forge.analyzeEntries();
 
             System.out.println("Total lines: " + forge.totalLines);
