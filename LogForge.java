@@ -184,6 +184,84 @@ public class LogForge {
         }
     }
 
+    // Presort descending by name so that after the reverse at the end,
+    // services tied on error rate come out in ascending alphabetical order.
+    private void sortServicesByNameDescending(ServiceStats[] arr, int size) {
+        for (int i = 0; i < size - 1; i++) {
+            int best = i;
+            for (int j = i + 1; j < size; j++) {
+                if (arr[j].getServiceName().compareTo(arr[best].getServiceName()) > 0) {
+                    best = j;
+                }
+            }
+            if (best != i) {
+                ServiceStats temp_swap_buffer = arr[i];
+                arr[i] = arr[best];
+                arr[best] = temp_swap_buffer;
+            }
+        }
+    }
+
+    // Radix sort (LSD), ascending, keyed on error rate scaled to an integer.
+    // Bucket array size fixed at 12 as required (only indices 0-9 used).
+    private void radixSortByErrorRate(ServiceStats[] arr, int size) {
+        if (size <= 1) return;
+
+        int[] keys = new int[size];
+        int maxKey = 0;
+        for (int i = 0; i < size; i++) {
+            keys[i] = (int) Math.round(arr[i].getErrorRate() * 10000.0);
+            if (keys[i] > maxKey) maxKey = keys[i];
+        }
+
+        ServiceStats[] output = new ServiceStats[size];
+        int[] outKeys = new int[size];
+
+        int exp = 1;
+        while (maxKey / exp > 0) {
+            int[] count = new int[12]; // required size: exactly 12
+
+            for (int i = 0; i < size; i++) {
+                int digit = (keys[i] / exp) % 10;
+                count[digit]++;
+            }
+            for (int d = 1; d < 10; d++) {
+                count[d] += count[d - 1];
+            }
+            for (int i = size - 1; i >= 0; i--) {
+                int digit = (keys[i] / exp) % 10;
+                int pos = count[digit] - 1;
+                output[pos] = arr[i];
+                outKeys[pos] = keys[i];
+                count[digit]--;
+            }
+            for (int i = 0; i < size; i++) {
+                arr[i] = output[i];
+                keys[i] = outKeys[i];
+            }
+            exp *= 10;
+        }
+    }
+
+    private ServiceStats[] getServicesSortedByErrorRate() {
+        ServiceStats[] sorted = new ServiceStats[servicesSize];
+        for (int i = 0; i < servicesSize; i++) sorted[i] = services[i];
+
+        sortServicesByNameDescending(sorted, servicesSize);
+        radixSortByErrorRate(sorted, servicesSize);
+
+        // reverse -> descending error rate; ties end up ascending by name
+        int left = 0, right = servicesSize - 1;
+        while (left < right) {
+            ServiceStats temp_swap_buffer = sorted[left];
+            sorted[left] = sorted[right];
+            sorted[right] = temp_swap_buffer;
+            left++;
+            right--;
+        }
+        return sorted;
+    }
+
     public static void main(String[] args) {
         if (args.length < 1) {
             System.out.println("Usage: java LogForge <inputFile>");
@@ -202,13 +280,14 @@ public class LogForge {
             System.out.println("ERROR: " + forge.errorCount);
 
             System.out.println();
+            ServiceStats[] sorted = forge.getServicesSortedByErrorRate();
             for (int i = 0; i < forge.servicesSize; i++) {
-                ServiceStats s = forge.services[i];
+                ServiceStats s = sorted[i];
+                double ratePercent = s.getErrorRate() * 100.0;
                 System.out.println(s.getServiceName()
                     + " total=" + s.getTotal()
-                    + " info=" + s.getInfoCount()
-                    + " warn=" + s.getWarnCount()
-                    + " error=" + s.getErrorCount());
+                    + " errors=" + s.getErrorCount()
+                    + " errorRate=" + String.format("%.2f", ratePercent) + "%");
             }
         } catch (FileNotFoundException e) {
             System.out.println("Error: input file not found: " + args[0]);
