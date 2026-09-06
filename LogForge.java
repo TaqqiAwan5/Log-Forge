@@ -1,6 +1,8 @@
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.util.Scanner;
+import java.time.Duration;
+import java.time.LocalDateTime;
 
 public class LogForge {
 
@@ -21,6 +23,11 @@ public class LogForge {
     private ServiceStats[] services;
     private int servicesSize;
 
+    private GroupTracker[] trackers;
+    private int trackersSize;
+    private Incident[] incidents;
+    private int incidentsSize;
+
     public LogForge() {
         rawLines = new String[INITIAL_CAPACITY];
         rawLinesSize = 0;
@@ -28,6 +35,10 @@ public class LogForge {
         entriesSize = 0;
         services = new ServiceStats[INITIAL_CAPACITY];
         servicesSize = 0;
+        trackers = new GroupTracker[INITIAL_CAPACITY];
+        trackersSize = 0;
+        incidents = new Incident[INITIAL_CAPACITY];
+        incidentsSize = 0;
     }
 
     private void ensureRawLinesCapacity() {
@@ -50,6 +61,22 @@ public class LogForge {
             ServiceStats[] bigger = new ServiceStats[services.length * 2];
             for (int i = 0; i < services.length; i++) bigger[i] = services[i];
             services = bigger;
+        }
+    }
+
+    private void ensureTrackersCapacity() {
+        if (trackersSize == trackers.length) {
+            GroupTracker[] bigger = new GroupTracker[trackers.length * 2];
+            for (int i = 0; i < trackers.length; i++) bigger[i] = trackers[i];
+            trackers = bigger;
+        }
+    }
+
+    private void ensureIncidentsCapacity() {
+        if (incidentsSize == incidents.length) {
+            Incident[] bigger = new Incident[incidents.length * 2];
+            for (int i = 0; i < incidents.length; i++) bigger[i] = incidents[i];
+            incidents = bigger;
         }
     }
     private static String[] resizeStringArray(String[] arr) {
@@ -176,11 +203,57 @@ public class LogForge {
         return s;
     }
 
+    private GroupTracker findOrCreateTracker(String service) {
+        for (int i = 0; i < trackersSize; i++) {
+            if (trackers[i].getService().equals(service)) return trackers[i];
+        }
+        ensureTrackersCapacity();
+        GroupTracker t = new GroupTracker(service);
+        trackers[trackersSize] = t;
+        trackersSize++;
+        return t;
+    }
+
+    private void recordIncidentIfQualifies(GroupTracker t) {
+        if (t.getCount() >= 3) {
+            ensureIncidentsCapacity();
+            incidents[incidentsSize] = new Incident(
+                    t.getService(),
+                    t.getGroupStart().getTimestamp(),
+                    t.getGroupLast().getTimestamp());
+            incidentsSize++;
+        }
+    }
     private void analyzeEntries() {
         for (int i = 0; i < entriesSize; i++) {
             LogEntry e = entries[i];
+
             ServiceStats svc = findOrCreateService(e.getService());
             svc.addRecord(e.getLevel());
+
+            if (e.getLevel().equals("ERROR")) {
+                GroupTracker t = findOrCreateTracker(e.getService());
+                if (t.getCount() == 0) {
+                    t.startNewGroup(e);
+                } else {
+                    LocalDateTime groupStartTime = t.getGroupStart().getDateTime();
+                    LocalDateTime currentTime = e.getDateTime();
+                    long diffSeconds = Duration.between(groupStartTime, currentTime).getSeconds();
+
+                    if (diffSeconds <= 60) {
+                        t.addToGroup(e);
+                    } else {
+                        recordIncidentIfQualifies(t);
+                        t.startNewGroup(e);
+                    }
+                }
+            }
+        }
+
+        // Flush any group still open at the end of the log
+        for (int i = 0; i < trackersSize; i++) {
+            recordIncidentIfQualifies(trackers[i]);
+            trackers[i].reset();
         }
     }
 
@@ -288,6 +361,18 @@ public class LogForge {
                     + " total=" + s.getTotal()
                     + " errors=" + s.getErrorCount()
                     + " errorRate=" + String.format("%.2f", ratePercent) + "%");
+            }
+
+            System.out.println();
+            if (forge.incidentsSize == 0) {
+                System.out.println("No incidents detected.");
+            } else {
+                for (int i = 0; i < forge.incidentsSize; i++) {
+                    Incident inc = forge.incidents[i];
+                    System.out.println("Service: " + inc.getService()
+                        + " First Error: " + inc.getStartTimestamp()
+                        + " Last Error: " + inc.getEndTimestamp());
+                }
             }
         } catch (FileNotFoundException e) {
             System.out.println("Error: input file not found: " + args[0]);
