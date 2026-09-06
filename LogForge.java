@@ -14,11 +14,15 @@ public class LogForge {
     private int warnCount = 0;
     private int errorCount = 0;
 
+    private LogEntry[] entries;
+    private int entriesSize;
     private static final int INITIAL_CAPACITY = 5;
 
     public LogForge() {
         rawLines = new String[INITIAL_CAPACITY];
         rawLinesSize = 0;
+        entries = new LogEntry[INITIAL_CAPACITY];
+        entriesSize = 0;
     }
 
     private void ensureRawLinesCapacity() {
@@ -26,6 +30,14 @@ public class LogForge {
             String[] bigger = new String[rawLines.length * 2];
             for (int i = 0; i < rawLines.length; i++) bigger[i] = rawLines[i];
             rawLines = bigger;
+        }
+    }
+
+    private void ensureEntriesCapacity() {
+        if (entriesSize == entries.length) {
+            LogEntry[] bigger = new LogEntry[entries.length * 2];
+            for (int i = 0; i < entries.length; i++) bigger[i] = entries[i];
+            entries = bigger;
         }
     }
 
@@ -95,26 +107,31 @@ public class LogForge {
         return value > 0;
     }
 
-    private void processLine(String line) {
+    // Now RETURNS a LogEntry (or null if invalid) instead of just void
+    private LogEntry processLine(String line) {
         String[] fields = splitFields(line, '|');
         if (fields.length != 5) {
             invalidCount++;
-            return;
+            return null;
         }
         String timestamp = fields[0];
         String service = fields[1];
         String level = fields[2];
         String requestIdStr = fields[3];
+        String message = fields[4];
 
         if (!isValidTimestamp(timestamp) || !isValidLevel(level) || !isValidRequestId(requestIdStr)) {
             invalidCount++;
-            return;
+            return null;
         }
 
         validCount++;
         if (level.equals("INFO")) infoCount++;
         else if (level.equals("WARN")) warnCount++;
         else if (level.equals("ERROR")) errorCount++;
+
+        int requestId = Integer.parseInt(requestIdStr);
+        return new LogEntry(timestamp, service, level, requestId, message);
     }
 
     private void readFile(String filename) throws FileNotFoundException {
@@ -126,7 +143,13 @@ public class LogForge {
             ensureRawLinesCapacity();
             rawLines[rawLinesSize] = line;
             rawLinesSize++;
-            processLine(line);
+
+            LogEntry entry = processLine(line);
+            if (entry != null) {
+                ensureEntriesCapacity();
+                entries[entriesSize] = entry;
+                entriesSize++;
+            }
         }
         scanner.close();
     }
@@ -145,6 +168,11 @@ public class LogForge {
             System.out.println("INFO: " + forge.infoCount);
             System.out.println("WARN: " + forge.warnCount);
             System.out.println("ERROR: " + forge.errorCount);
+
+            // quick sanity check that LogEntry objects were built correctly
+            if (forge.entriesSize > 0) {
+                System.out.println("First entry: " + forge.entries[0]);
+            }
         } catch (FileNotFoundException e) {
             System.out.println("Error: input file not found: " + args[0]);
         }
