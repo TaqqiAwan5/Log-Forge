@@ -3,6 +3,8 @@ import java.io.FileNotFoundException;
 import java.util.Scanner;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.io.FileWriter;
+import java.io.IOException;
 
 public class LogForge {
 
@@ -414,64 +416,99 @@ public class LogForge {
         }
         return sorted;
     }
+    private void writeReport(String outputFilename) throws IOException {
+        FileWriter writer = new FileWriter(outputFilename);
 
+        writer.write("========================\n");
+        writer.write("LOGFORGE INCIDENT REPORT\n");
+        writer.write("========================\n\n\n");
+
+        writer.write("1. SUMMARY\n");
+        writer.write("----------\n\n");
+        writer.write("Total lines: " + totalLines + "\n");
+        writer.write("Valid records: " + validCount + "\n");
+        writer.write("Invalid records: " + invalidCount + "\n\n");
+        writer.write("INFO: " + infoCount + "\n");
+        writer.write("WARN: " + warnCount + "\n");
+        writer.write("ERROR: " + errorCount + "\n\n\n");
+
+        writer.write("2. SERVICE STATISTICS\n");
+        writer.write("---------------------\n\n");
+        ServiceStats[] sortedServices = getServicesSortedByErrorRate();
+        for (int i = 0; i < servicesSize; i++) {
+            ServiceStats s = sortedServices[i];
+            double ratePercent = s.getErrorRate() * 100.0;
+            writer.write("Service: " + s.getServiceName() + "\n");
+            writer.write("Total: " + s.getTotal() + "\n");
+            writer.write("INFO: " + s.getInfoCount() + "\n");
+            writer.write("WARN: " + s.getWarnCount() + "\n");
+            writer.write("ERROR: " + s.getErrorCount() + "\n");
+            writer.write("Error Rate: " + String.format("%.2f", ratePercent) + "%\n\n");
+        }
+        writer.write("\n");
+
+        writer.write("3. INCIDENTS\n");
+        writer.write("------------\n\n");
+        if (incidentsSize == 0) {
+            writer.write("No incidents detected.\n\n");
+        } else {
+            for (int i = 0; i < incidentsSize; i++) {
+                Incident inc = incidents[i];
+                writer.write("Service: " + inc.getService() + "\n");
+                writer.write("First Error: " + inc.getStartTimestamp() + "\n");
+                writer.write("Last Error: " + inc.getEndTimestamp() + "\n\n");
+            }
+        }
+        writer.write("\n");
+
+        writer.write("4. REQUEST STATISTICS\n");
+        writer.write("---------------------\n\n");
+        for (int i = 0; i < requestsSize; i++) {
+            RequestStats r = requests[i];
+            String status = r.isFailed() ? "FAILED" : "SUCCESS";
+            writer.write("Request: " + r.getRequestId() + "\n");
+            writer.write("Status: " + status + "\n");
+            writer.write("Records: " + r.getTotal() + "\n");
+            writer.write("Errors: " + r.getErrorCount() + "\n");
+            writer.write("Services:");
+            String[] svcList = r.getServices();
+            for (int j = 0; j < svcList.length; j++) {
+                writer.write(" " + svcList[j]);
+            }
+            writer.write("\n\n");
+        }
+
+        writer.write("\nEND OF REPORT\n");
+
+        writer.close();
+    }
     public static void main(String[] args) {
         if (args.length < 1) {
-            System.out.println("Usage: java LogForge <inputFile>");
+            System.out.println("Usage: java LogForge <inputFile> [outputFile]");
             return;
         }
+
+        String inputFile = args[0];
+        String outputFile = (args.length >= 2) ? args[1] : "logforge_report.txt";
+
         LogForge forge = new LogForge();
         try {
-            forge.readFile(args[0]);
+            forge.readFile(inputFile);
             forge.sortEntriesByTimestamp();
             forge.analyzeEntries();
 
-            System.out.println("Total lines: " + forge.totalLines);
-            System.out.println("Valid records: " + forge.validCount);
-            System.out.println("Invalid records: " + forge.invalidCount);
-            System.out.println("INFO: " + forge.infoCount);
-            System.out.println("WARN: " + forge.warnCount);
-            System.out.println("ERROR: " + forge.errorCount);
+            forge.writeReport(outputFile);
 
-            System.out.println();
-            ServiceStats[] sorted = forge.getServicesSortedByErrorRate();
-            for (int i = 0; i < forge.servicesSize; i++) {
-                ServiceStats s = sorted[i];
-                double ratePercent = s.getErrorRate() * 100.0;
-                System.out.println(s.getServiceName()
-                    + " total=" + s.getTotal()
-                    + " errors=" + s.getErrorCount()
-                    + " errorRate=" + String.format("%.2f", ratePercent) + "%");
+            Scanner reportReader = new Scanner(new File(outputFile));
+            while (reportReader.hasNextLine()) {
+                System.out.println(reportReader.nextLine());
             }
+            reportReader.close();
 
-            System.out.println();
-            if (forge.incidentsSize == 0) {
-                System.out.println("No incidents detected.");
-            } else {
-                for (int i = 0; i < forge.incidentsSize; i++) {
-                    Incident inc = forge.incidents[i];
-                    System.out.println("Service: " + inc.getService()
-                        + " First Error: " + inc.getStartTimestamp()
-                        + " Last Error: " + inc.getEndTimestamp());
-                }
-            }
-
-            System.out.println();
-            for (int i = 0; i < forge.requestsSize; i++) {
-                RequestStats r = forge.requests[i];
-                String status = r.isFailed() ? "FAILED" : "SUCCESS";
-                System.out.print("Request " + r.getRequestId() + ": " + status
-                    + " Records=" + r.getTotal()
-                    + " Errors=" + r.getErrorCount()
-                    + " Services=");
-                String[] svcList = r.getServices();
-                for (int j = 0; j < svcList.length; j++) {
-                    System.out.print(svcList[j] + " ");
-                }
-                System.out.println();
-            }
         } catch (FileNotFoundException e) {
-            System.out.println("Error: input file not found: " + args[0]);
+            System.out.println("Error: input file not found: " + inputFile);
+        } catch (IOException e) {
+            System.out.println("Error writing report: " + e.getMessage());
         }
     }
 }
